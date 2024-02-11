@@ -47,8 +47,6 @@ func focusWindow(_ pid: pid_t) {
   print("Focusing window with PID \(pid)")
 }
 
-// Main server loop
-// Main server loop
 repeat {
   let client = accept(sock, nil, nil)
   guard client >= 0 else {
@@ -64,35 +62,26 @@ repeat {
     continue
   }
 
-  // Directly create a Data object from the buffer
   let receivedData = Data(bytes: buffer, count: bytesRead)
-  if let receivedString = String(data: receivedData, encoding: .utf8) {
-    // Split the request into headers and body
-    let parts = receivedString.components(separatedBy: "\r\n\r\n")
-    guard parts.count >= 2 else {
-      print("Failed to parse request")
-      close(client)
-      continue
-    }
-
-    let body = parts[1]
-
-    // Debugging
-    print("Received body: \(body)")
-
-    // Now, you can safely assume body is a string containing your JSON payload
-    if let jsonData = body.data(using: .utf8) {
-      do {
-        let json = try JSONSerialization.jsonObject(with: jsonData, options: [])
-        print("Parsed JSON: \(json)")
-
-        handleCommand(json: json as! [String: Any])
-      } catch {
-        print("Error parsing JSON: \(error.localizedDescription)")
-      }
+  if let receivedString = String(data: receivedData, encoding: .utf8),
+    let separatorRange = receivedString.range(of: "\r\n\r\n"),
+    let jsonData = String(receivedString[separatorRange.upperBound...]).data(using: .utf8)
+  {
+    do {
+      let json = try JSONSerialization.jsonObject(with: jsonData, options: [])
+      let statusCode = handleCommand(json: json as! [String: Any])
+      let response =
+        "HTTP/1.1 \(statusCode) \(HTTPURLResponse.localizedString(forStatusCode: statusCode))\r\nContent-Length: 0\r\n\r\n"
+      send(client, response, response.lengthOfBytes(using: .utf8), 0)
+    } catch {
+      print("Error parsing JSON: \(error.localizedDescription)")
+      let errorResponse = "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n"
+      send(client, errorResponse, errorResponse.lengthOfBytes(using: .utf8), 0)
     }
   } else {
     print("Failed to decode buffer into string")
+    let errorResponse = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n"
+    send(client, errorResponse, errorResponse.lengthOfBytes(using: .utf8), 0)
   }
 
   close(client)
@@ -100,11 +89,15 @@ repeat {
 
 close(sock)
 
-func handleCommand(json: [String: Any]) {
+func handleCommand(json: [String: Any]) -> Int {
+
+  // print("Received JSONarstrast"
   guard let command = json["command"] as? String else {
     print("Invalid command format")
-    return
+    return 500
   }
+
+  print("Received command: \(command)")
 
   switch command {
   case "setPosition":
@@ -115,21 +108,27 @@ func handleCommand(json: [String: Any]) {
       let height = json["height"] as? Int
     {
       let title = json["title"] as? String
-      setPosition(pid: pid_t(pid), title: title, x: x, y: y, width: width, height: height)
+      print("nnnnnnn")
+
+      return setPosition(pid: pid_t(pid), title: title, x: x, y: y, width: width, height: height)
     }
   case "focus":
     if let pid = json["pid"] as? Int,
       let title = json["title"] as? String
     {
       print("Focusing window with PID \(pid) and title \(title)")
-      focusWindow(pid: pid_t(pid), title: title)
+      return focusWindow(pid: pid_t(pid), title: title)
     }
+    return 200
   default:
     print("Unknown command")
+    return 400
   }
+
+  return 500
 }
 
-func setPosition(pid: pid_t, title: String?, x: Int, y: Int, width: Int, height: Int) {
+func setPosition(pid: pid_t, title: String?, x: Int, y: Int, width: Int, height: Int) -> Int {
   let position = CGPoint(x: x, y: y)
   let size = CGSize(width: width, height: height)
 
@@ -139,7 +138,7 @@ func setPosition(pid: pid_t, title: String?, x: Int, y: Int, width: Int, height:
 
   guard result == .success, let windows = value as? [AXUIElement] else {
     print("Failed to get windows for PID: \(pid)")
-    return
+    return 500
   }
 
   var didSetPosition = false
@@ -148,21 +147,25 @@ func setPosition(pid: pid_t, title: String?, x: Int, y: Int, width: Int, height:
       var titleValue: CFTypeRef?
       AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleValue)
 
-      if let title = titleValue as? String, title == targetTitle {
+      // Use contains to check if the window's title includes the targetTitle
+      if let title = titleValue as? String, title.contains(targetTitle) {
         setPositionAndSizeForWindow(window: window, position: position, size: size)
         didSetPosition = true
         break  // Stop after setting position and size for the target window
       }
     } else {
-      // If no specific title is provided, apply to all windows of the application
       setPositionAndSizeForWindow(window: window, position: position, size: size)
       didSetPosition = true
+      continue
     }
   }
 
   if !didSetPosition {
-    print("No matching window found for PID: \(pid) with title: \(title ?? "nil")")
+    print("No matching window found for PID: \(pid) with title containing: \(title ?? "nil")")
+    return 500
   }
+
+  return 200
 }
 
 // Helper function to set position and size for a window
@@ -179,30 +182,43 @@ func setPositionAndSizeForWindow(window: AXUIElement, position: CGPoint, size: C
   print("Window position set to \(position), size set to \(size).")
 }
 
-func focusWindow(pid: pid_t, title: String? = nil) {
+func focusWindow(pid: pid_t, title: String? = nil) -> Int {
+  // Check if a title is supplied; if not, return 500
+  guard let targetTitle = title, !targetTitle.isEmpty else {
+    print("No title supplied for PID: \(pid)")
+    return 500
+  }
+
   let appRef = AXUIElementCreateApplication(pid)
   var value: CFTypeRef?
   let result = AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &value)
 
-  guard result == .success, let windows = value as? [AXUIElement] else {
-    print("Failed to get windows for PID: \(pid)")
-    return
+  guard result == .success, let windows = value as? [AXUIElement], !windows.isEmpty else {
+    print("Failed to get windows for PID: \(pid) or no windows available")
+    return 500
   }
 
+  var windowFoundAndFocused = false
   for window in windows {
-    guard let targetTitle = title else {
-      focusAndRaiseWindow(window: window)
-      return  // Focus the first window if no title is specified
-    }
-
     var titleValue: CFTypeRef?
     AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleValue)
 
-    if let title = titleValue as? String, title == targetTitle {
+    // Change the title check to see if the window's title contains the targetTitle
+    if let title = titleValue as? String, title.contains(targetTitle) {
       focusAndRaiseWindow(window: window)
-      break  // Focus and stop if the target window is found
+      windowFoundAndFocused = true
+      break  // Stop after focusing the matching window
     }
   }
+
+  // If no window matching (containing) the title was found, return 500
+  if !windowFoundAndFocused {
+    print("No matching window found for PID: \(pid) with title containing: \(targetTitle)")
+    return 500
+  }
+
+  // Successfully focused a window
+  return 200
 }
 
 // Helper function to focus and raise a window
