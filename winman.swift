@@ -107,10 +107,11 @@ func handleCommand(json: [String: Any]) -> Int {
       let width = json["width"] as? Int,
       let height = json["height"] as? Int
     {
-      let title = json["title"] as? String
+      let frontmostOnly = json["frontmostOnly"] as? Bool
       print("nnnnnnn")
 
-      return setPosition(pid: pid_t(pid), title: title, x: x, y: y, width: width, height: height)
+      return setPosition(
+        pid: pid_t(pid), frontmostOnly: frontmostOnly, x: x, y: y, width: width, height: height)
     }
   case "focus":
     if let pid = json["pid"] as? Int,
@@ -128,40 +129,77 @@ func handleCommand(json: [String: Any]) -> Int {
   return 500
 }
 
-func setPosition(pid: pid_t, title: String?, x: Int, y: Int, width: Int, height: Int) -> Int {
+func setPosition(pid: pid_t, frontmostOnly: Bool?, x: Int, y: Int, width: Int, height: Int) -> Int {
   let position = CGPoint(x: x, y: y)
   let size = CGSize(width: width, height: height)
 
   let appRef = AXUIElementCreateApplication(pid)
-  var value: CFTypeRef?
-  let result = AXUIElementCopyAttributeValue(appRef, kAXWindowsAttribute as CFString, &value)
 
-  guard result == .success, let windows = value as? [AXUIElement] else {
-    print("Failed to get windows for PID: \(pid)")
-    return 500
-  }
+  if frontmostOnly == true {
+    print("front true")
 
-  var didSetPosition = false
-  for window in windows {
-    if let targetTitle = title, !targetTitle.isEmpty {
-      var titleValue: CFTypeRef?
-      AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleValue)
+    // Retrieve the frontmost (focused) window
+    var frontWindowValue: CFTypeRef?
+    let frontWindowResult = AXUIElementCopyAttributeValue(
+      appRef, kAXFocusedWindowAttribute as CFString, &frontWindowValue)
 
-      // Use contains to check if the window's title includes the targetTitle
-      if let title = titleValue as? String, title.contains(targetTitle) {
-        setPositionAndSizeForWindow(window: window, position: position, size: size)
-        didSetPosition = true
-        break  // Stop after setting position and size for the target window
-      }
+    if frontWindowResult == .success, let frontWindow = frontWindowValue as! AXUIElement? {
+      // Directly set position and size for the frontmost window
+      setPositionAndSizeForWindow(window: frontWindow, position: position, size: size)
+      return 200
     } else {
+      print("Failed to get the frontmost window for PID: \(pid)")
+      return 500
+    }
+  } else {
+    print("front false")
+    // Set position and size for all windows
+    var allWindowsValue: CFTypeRef?
+    let allWindowsResult = AXUIElementCopyAttributeValue(
+      appRef, kAXWindowsAttribute as CFString, &allWindowsValue)
+
+    guard allWindowsResult == .success, let windows = allWindowsValue as? [AXUIElement] else {
+      print("Failed to get windows for PID: \(pid)")
+      return 500
+    }
+    var didSetPosition = false
+    for window in windows {
       setPositionAndSizeForWindow(window: window, position: position, size: size)
       didSetPosition = true
-      continue
+    }
+
+    if !didSetPosition {
+      print("No matching window found for PID: \(pid)")
+      return 500
     }
   }
 
-  if !didSetPosition {
-    print("No matching window found for PID: \(pid) with title containing: \(title ?? "nil")")
+  return 200
+}
+
+func setPosition(pid: pid_t, x: Int, y: Int, width: Int, height: Int) -> Int {
+  let position = CGPoint(x: x, y: y)
+  let size = CGSize(width: width, height: height)
+
+  let appRef = AXUIElementCreateApplication(pid)
+  var frontWindow: AXUIElement?
+
+  // Retrieve the frontmost (focused) window
+  var value: CFTypeRef?
+  let result = AXUIElementCopyAttributeValue(appRef, kAXFocusedWindowAttribute as CFString, &value)
+
+  guard result == .success, let window = value as! AXUIElement? else {
+    print("Failed to get the frontmost window for PID: \(pid)")
+    return 500
+  }
+
+  frontWindow = window
+
+  // Set position and size for the frontmost window
+  if let frontWindow = frontWindow {
+    setPositionAndSizeForWindow(window: frontWindow, position: position, size: size)
+  } else {
+    print("No frontmost window found for PID: \(pid)")
     return 500
   }
 
