@@ -241,11 +241,19 @@ func focusWindow(pid: pid_t, title: String? = nil) -> Int {
     var titleValue: CFTypeRef?
     AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleValue)
 
-    // Change the title check to see if the window's title contains the targetTitle
-    if let title = titleValue as? String, title.contains(targetTitle) {
-      focusAndRaiseWindow(window: window)
-      windowFoundAndFocused = true
-      break  // Stop after focusing the matching window
+    // Extract the initial part of the title up to the first whitespace, if present
+    if let title = titleValue as? String {
+      // Find the index of the first whitespace or end of the string if no whitespace is found
+      let endIndex = title.firstIndex(where: { $0.isWhitespace }) ?? title.endIndex
+      // Extract the substring from the start to the first whitespace
+      let trimmedTitle = String(title[..<endIndex])
+
+      // Check if the trimmed title matches the targetTitle exactly
+      if trimmedTitle == targetTitle {
+        focusAndRaiseWindow(window: window)
+        windowFoundAndFocused = true
+        break  // Stop after focusing the matching window
+      }
     }
   }
 
