@@ -3,10 +3,8 @@ import Cocoa
 import Darwin.C
 import Foundation
 
-// Define the server's port number
-let portNumber = UInt16(57320)
+let portNumber: UInt16 = 57320
 
-// Create a socket for IPv4 and TCP
 let internetLayerProtocol = AF_INET
 let transportLayerType = SOCK_STREAM
 let sock = socket(internetLayerProtocol, transportLayerType, 0)
@@ -14,27 +12,24 @@ guard sock >= 0 else {
   fatalError("Failed to create socket")
 }
 
-// Configure the server address
 var serveraddr = sockaddr_in()
 serveraddr.sin_family = sa_family_t(AF_INET)
-serveraddr.sin_port = in_port_t((portNumber << 8) + (portNumber >> 8))  // Network byte order
-serveraddr.sin_addr = in_addr(s_addr: in_addr_t(0))
+serveraddr.sin_port = CFSwapInt16HostToBig(portNumber)  // Convert port number to network byte order
+serveraddr.sin_addr = in_addr(s_addr: INADDR_ANY)  // Bind to any address
 serveraddr.sin_zero = (0, 0, 0, 0, 0, 0, 0, 0)  // Padding for alignment
 
-// Bind the socket
 withUnsafePointer(to: &serveraddr) { sockaddrInPtr in
   let sockaddrPtr = UnsafeRawPointer(sockaddrInPtr).assumingMemoryBound(to: sockaddr.self)
   guard bind(sock, sockaddrPtr, socklen_t(MemoryLayout<sockaddr_in>.size)) >= 0 else {
-    fatalError("Failed to bind socket")
+    fatalError("Failed to bind socket: \(String(cString: strerror(errno)))")
   }
 }
 
-// Listen for incoming connections
-guard listen(sock, 5) >= 0 else {
-  fatalError("Failed to listen on socket")
+guard listen(sock, SOMAXCONN) >= 0 else {
+  fatalError("Failed to listen on socket: \(String(cString: strerror(errno)))")
 }
 
-print("Server listening on port \(portNumber)")
+print("Server is listening on port \(portNumber)")
 
 // Define functions to manipulate window positions
 func setPosition(_ pid: pid_t, x: Int, y: Int) {
