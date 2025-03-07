@@ -257,6 +257,7 @@ class X11WindowManager:
                 self.display.intern_atom('_NET_WM_STATE'),
                 X.AnyPropertyType
             )
+            print(f"Window state: {state}")
             
             # If window is maximized, unmaximize it first
             if state and (
@@ -273,8 +274,11 @@ class X11WindowManager:
                 width=new_width,
                 height=new_height
             )
+
+            print(f"Window state after unmaximize: {window.get_full_property(self.display.intern_atom('_NET_WM_STATE'), X.AnyPropertyType)}")
             
             self.display.sync()
+            print(f"Window state after sync: {window.get_full_property(self.display.intern_atom('_NET_WM_STATE'), X.AnyPropertyType)}")
             return True
             
         except Exception as e:
@@ -282,6 +286,8 @@ class X11WindowManager:
             return False
 
     def _unmaximize_window(self, window):
+        from Xlib.protocol import event as xlib_event 
+
         """Helper function to unmaximize a window."""
         maximize_vert = self.display.intern_atom('_NET_WM_STATE_MAXIMIZED_VERT')
         maximize_horz = self.display.intern_atom('_NET_WM_STATE_MAXIMIZED_HORZ')
@@ -295,10 +301,10 @@ class X11WindowManager:
             1  # normal application
         ]
         
-        event = X.event.ClientMessage(
+        event = xlib_event.ClientMessage(
             window=window,
             client_type=wm_state,
-            data=(32, event_data)
+             data=(32, [0, maximize_vert, maximize_horz, 1, 0])
         )
         
         # Send event
